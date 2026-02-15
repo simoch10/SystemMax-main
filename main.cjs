@@ -8,15 +8,45 @@ const net = require('net');
 const { createClient } = require('@supabase/supabase-js');
 const { autoUpdater } = require('electron-updater');
 
+
 // --- 🌐 SUPABASE CONFIGURATION ---
 const supabaseUrl = 'https://shskabspsedvaoweydvb.supabase.co';
 const supabaseKey = 'sb_publishable_e33gjWLMkOh0ufvb9VIpgg_nk17u5it';
 const supabase = createClient(supabaseUrl, supabaseKey);
 
+
 // --- المتغيرات العالمية ---
 let tray = null;
 let mainWindow = null;
 let isQuiting = false;
+
+
+// --- 🧾 Simple file logger (باش نعرفو علاش كيطفي فـ EXE) ---
+function logToFile(...args) {
+    try {
+        const logPath = path.join(app.getPath('userData'), 'systemmax.log');
+        const line = `[${new Date().toISOString()}] ${args.map(a => (typeof a === 'string' ? a : JSON.stringify(a))).join(' ')}\n`;
+        fs.appendFileSync(logPath, line);
+    } catch (e) { }
+}
+
+process.on('uncaughtException', (err) => {
+    logToFile('uncaughtException:', String(err?.stack || err));
+});
+
+process.on('unhandledRejection', (err) => {
+    logToFile('unhandledRejection:', String(err?.stack || err));
+});
+
+
+// --- ✅ Path helper (DEV vs Packaged) ---
+// extraResources كيمشيو لـ process.resourcesPath فـ production [web:426][web:355]
+function getAssetPath(...p) {
+    return app.isPackaged
+        ? path.join(process.resourcesPath, ...p)
+        : path.join(__dirname, ...p);
+}
+
 
 // --- ✅ UPDATER HELPERS ---
 function sendUpdate(channel, payload) {
@@ -39,6 +69,7 @@ function setupAutoUpdater() {
     autoUpdater.on('error', (err) => sendUpdate('update:error', String(err)));
 }
 
+
 // --- 📅 مدد الاشتراكات بالأيام ---
 const PLAN_DURATIONS = {
     '1 Month': 30,
@@ -47,6 +78,7 @@ const PLAN_DURATIONS = {
     '12 Months': 365,
     'Premium': 9999 // Lifetime
 };
+
 
 // --- 🔒 HWID GENERATOR ---
 const getHWID = async () => {
@@ -57,6 +89,7 @@ const getHWID = async () => {
         return os.hostname();
     }
 };
+
 
 // --- 🔒 LOCAL CONFIG ---
 const userDataPath = app.getPath('userData');
@@ -84,6 +117,7 @@ function loadConfig() {
 function saveConfig(config) {
     try { fs.writeFileSync(configPath, JSON.stringify(config)); } catch (e) { }
 }
+
 
 // --- 📁 Helper Functions for Cleaner ---
 const getDirInfo = (dirPath) => {
@@ -120,22 +154,27 @@ const clearDir = (dirPath) => {
     } catch (e) { }
 };
 
+
 function createWindow() {
+    const iconPath = getAssetPath('resources', 'icon.ico'); // ✅ مهم فـ packaged [web:426][web:355]
+
     mainWindow = new BrowserWindow({
-        width: 1200, height: 800,
+        width: 1200,
+        height: 800,
         webPreferences: {
             preload: path.join(__dirname, 'preload.cjs'),
             contextIsolation: true,
             nodeIntegration: false
         },
         autoHideMenuBar: true,
-        icon: path.join(__dirname, 'resources/icon.ico')
+        icon: iconPath
     });
 
     // ✅ DEV vs PRODUCTION
     if (app.isPackaged) {
-        // إذا فاش build لقيتي path غلط، غادي نصلحو فـ Step الجاي (غير صيفط ليا build output structure)
-        mainWindow.loadFile(path.join(__dirname, 'dist', 'index.html'));
+        // app.getAppPath() كيشير ل app.asar فـ packaged غالباً، وdist راه داخل files [web:441]
+        const indexPath = path.join(app.getAppPath(), 'dist', 'index.html');
+        mainWindow.loadFile(indexPath).catch((e) => logToFile('loadFile error:', String(e)));
     } else {
         mainWindow.loadURL('http://localhost:5173');
         mainWindow.webContents.openDevTools();
@@ -157,8 +196,6 @@ function createWindow() {
     // --- 🌟 UPDATES (GitHub Releases via electron-updater) ---
     ipcMain.handle('get-app-version', () => app.getVersion());
 
-    // ✅ حافظنا على نفس الاسم باش preload ما يتكسرش: checkUpdate() => 'check-update'
-    // ✅ وحافظنا على نفس شكل result القديم: latest / update_available / error
     ipcMain.handle('check-update', async () => {
         if (!app.isPackaged) {
             return { status: 'dev', message: 'Updates work only in packaged build.' };
@@ -201,7 +238,6 @@ function createWindow() {
         });
     });
 
-    // هادو جداد (غادي نزيدو ليهم preload/UI من بعد)
     ipcMain.handle('download-update', async () => {
         if (!app.isPackaged) return { status: 'dev' };
         await autoUpdater.downloadUpdate();
@@ -352,7 +388,7 @@ function createWindow() {
                 tray.setToolTip(tooltipTable);
             }
         } catch (e) {
-            console.error("Stats Error:", e);
+            logToFile("Stats Error:", String(e?.stack || e));
         }
     }, 2000);
 
@@ -469,36 +505,38 @@ function createWindow() {
     });
 }
 
+
 // 🌟 تشغيل التطبيق والـ Tray
 app.whenReady().then(() => {
     createWindow();
     setupAutoUpdater();
 
-    const iconPath = path.join(__dirname, 'resources/icon.ico');
-    let trayIcon;
-    if (fs.existsSync(iconPath)) {
-        trayIcon = nativeImage.createFromPath(iconPath);
+    // ✅ Tray icon path: production من process.resourcesPath + resources/icon.ico [web:426][web:355]
+    const iconPath = getAssetPath('resources', 'icon.ico');
+    const trayIcon = nativeImage.createFromPath(iconPath);
+
+    // ✅ مهم: إلا كانت الصورة empty ما نديروش Tray باش ما يطيحش على Windows [web:350]
+    if (!trayIcon.isEmpty()) { // image.isEmpty() API [web:446]
+        tray = new Tray(trayIcon);
+
+        const contextMenu = Menu.buildFromTemplate([
+            { label: 'Open SystemMax', click: () => { if (mainWindow) mainWindow.show(); } },
+            { type: 'separator' },
+            { label: 'Quit', click: () => { isQuiting = true; app.quit(); } }
+        ]);
+
+        tray.setToolTip('SystemMax Optimizer');
+        tray.setContextMenu(contextMenu);
+
+        tray.on('click', () => {
+            if (mainWindow) {
+                mainWindow.show();
+                mainWindow.focus();
+            }
+        });
     } else {
-        trayIcon = nativeImage.createEmpty();
+        logToFile('Tray icon is empty, tray disabled. iconPath=', iconPath);
     }
-
-    tray = new Tray(trayIcon);
-
-    const contextMenu = Menu.buildFromTemplate([
-        { label: 'Open SystemMax', click: () => { mainWindow.show(); } },
-        { type: 'separator' },
-        { label: 'Quit', click: () => { isQuiting = true; app.quit(); } }
-    ]);
-
-    tray.setToolTip('SystemMax Optimizer');
-    tray.setContextMenu(contextMenu);
-
-    tray.on('click', () => {
-        if (mainWindow) {
-            mainWindow.show();
-            mainWindow.focus();
-        }
-    });
 });
 
 app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit(); });
