@@ -58,7 +58,3 @@
    ```bash
    git clone [https://github.com/your-username/systemmax-optimizer.git](https://github.com/your-username/systemmax-optimizer.git)
    cd systemmax-optimizer
-   Install dependencies:Bashnpm install
-Configure Supabase:Ensure your Supabase URL and Anon Key are correctly set in main.cjs for the licensing system to work.Run in Development Mode:Bashnpm run dev
-Note: For Vite + Electron, you may need to run the Vite dev server and the Electron app concurrently depending on your specific script setup.Build for Production:Bashnpm run build
-⚠️ Important NoteAdministrator Privileges Required: To accurately read CPU/GPU temperatures and execute system-level network/power optimizations, the compiled executable (.exe) must be run as an Administrator.📸 ScreenshotsDashboardGaming ModeNetwork OptimizerPremium LockScreen📄 LicenseThis is a proprietary tool. All rights reserved by the SystemMax Team.
