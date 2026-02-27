@@ -217,8 +217,8 @@ function App() {
                   setSidebarOpen(false);
                 }}
                 className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-all ${isActive
-                    ? 'bg-yellow-400 text-black font-semibold shadow-lg shadow-yellow-400/50'
-                    : 'text-zinc-300 hover:text-yellow-300 hover:bg-white/5'
+                  ? 'bg-yellow-400 text-black font-semibold shadow-lg shadow-yellow-400/50'
+                  : 'text-zinc-300 hover:text-yellow-300 hover:bg-white/5'
                   }`}
               >
                 <Icon className="w-5 h-5" />

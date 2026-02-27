@@ -2,7 +2,7 @@
   "name": "systemmax-optimizer",
   "productName": "SystemMax Optimizer",
   "private": true,
-  "version": "2.0.4",
+  "version": "2.0.5",
   "description": "Professional Gaming & Network Optimization Suite",
   "main": "main.cjs",
   "author": "SystemMax",
@@ -53,8 +53,6 @@
       "output": "dist-electron"
     },
     "files": [
-      "dist/**/*",
-      "resources/**/*",
       "main.cjs",
       "preload.cjs",
       "package.json"
@@ -63,6 +61,10 @@
       {
         "from": "resources",
         "to": "resources"
+      },
+      {
+        "from": "dist",
+        "to": "dist"
       }
     ],
     "publish": [
@@ -75,12 +77,12 @@
     "win": {
       "target": "nsis",
       "icon": "resources/icon.ico",
-      "requestedExecutionLevel": "requireAdministrator"
+      "requestedExecutionLevel": "asInvoker"
     },
     "nsis": {
       "oneClick": false,
       "allowToChangeInstallationDirectory": true,
-      "perMachine": true,
+      "perMachine": false,
       "createDesktopShortcut": true,
       "runAfterFinish": true
     }
