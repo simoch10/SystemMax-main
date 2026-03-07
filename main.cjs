@@ -1,4 +1,13 @@
-const { app, BrowserWindow, ipcMain, shell, Tray, Menu, nativeImage } = require('electron');
+require('dotenv').config({
+    path: require('path').join(
+        require('electron').app.isPackaged
+            ? process.resourcesPath
+            : __dirname,
+        '.env'
+    )
+});
+
+const { app, BrowserWindow, ipcMain, Tray, Menu, nativeImage } = require('electron');
 const path = require('path');
 const { pathToFileURL } = require('url');
 const si = require('systeminformation');
@@ -9,16 +18,14 @@ const net = require('net');
 const { createClient } = require('@supabase/supabase-js');
 const { autoUpdater } = require('electron-updater');
 
-// --- Global state (خاصهم يكونو قبل single-instance) ---
 let tray = null;
 let mainWindow = null;
 let isQuiting = false;
 
 /* =========================================================
-   EARLY BOOT FIXES (لازم يكونو هنا قبل app.whenReady)
+   EARLY BOOT FIXES
 ========================================================= */
 
-// 1) Single instance lock
 const gotTheLock = app.requestSingleInstanceLock();
 if (!gotTheLock) {
     app.quit();
@@ -34,7 +41,6 @@ if (!gotTheLock) {
     });
 }
 
-// 2) Force userData/cache to LocalAppData (Windows) to avoid permission/cache issues
 const APP_NAME = 'SystemMax Optimizer';
 const localAppData = process.env.LOCALAPPDATA || path.join(os.homedir(), 'AppData', 'Local');
 const localUserData = path.join(localAppData, APP_NAME);
@@ -50,12 +56,11 @@ try { app.setPath('cache', cacheDir); } catch (_) { }
 app.commandLine.appendSwitch('disk-cache-dir', cacheDir);
 app.commandLine.appendSwitch('gpu-disk-cache-dir', gpuCacheDir);
 
-// 3) GPU workaround (باش ما يطيحش قبل ما يفتح)
 app.disableHardwareAcceleration();
 app.commandLine.appendSwitch('disable-gpu');
 app.commandLine.appendSwitch('in-process-gpu');
 
-// --- 🧾 Simple file logger ---
+// --- 🧾 Logger ---
 function logToFile(...args) {
     try {
         const logPath = path.join(app.getPath('userData'), 'systemmax.log');
@@ -66,44 +71,39 @@ function logToFile(...args) {
     } catch (e) { }
 }
 
-process.on('uncaughtException', (err) => {
-    logToFile('uncaughtException:', String(err?.stack || err));
-});
-
-process.on('unhandledRejection', (err) => {
-    logToFile('unhandledRejection:', String(err?.stack || err));
-});
+process.on('uncaughtException', (err) => { logToFile('uncaughtException:', String(err?.stack || err)); });
+process.on('unhandledRejection', (err) => { logToFile('unhandledRejection:', String(err?.stack || err)); });
 
 logToFile('BOOT', {
     isPackaged: app.isPackaged,
     execPath: process.execPath,
     userData: (() => { try { return app.getPath('userData'); } catch { return 'n/a'; } })(),
-    cache: (() => { try { return app.getPath('cache'); } catch { return 'n/a'; } })(),
     resourcesPath: process.resourcesPath
 });
 
-// --- 🌐 SUPABASE CONFIGURATION ---
-const supabaseUrl = 'https://shskabspsedvaoweydvb.supabase.co';
-const supabaseKey = 'sb_publishable_e33gjWLMkOh0ufvb9VIpgg_nk17u5it';
-const supabase = createClient(supabaseUrl, supabaseKey);
+// --- 🌐 SUPABASE — Issue 3: env variables ---
+const supabaseUrl = process.env.SUPABASE_URL;
+const supabaseKey = process.env.SUPABASE_KEY;
 
-// --- ✅ Path helper (DEV vs Packaged) ---
+if (!supabaseUrl || !supabaseKey) {
+    logToFile('WARNING: Supabase env vars missing! Check .env file.');
+}
+
+const supabase = createClient(supabaseUrl || '', supabaseKey || '');
+
+// --- Path helper ---
 function getAssetPath(...p) {
     return app.isPackaged ? path.join(process.resourcesPath, ...p) : path.join(__dirname, ...p);
 }
 
-// --- ✅ UPDATER HELPERS ---
+// --- Updater ---
 function sendUpdate(channel, payload) {
-    if (mainWindow && !mainWindow.isDestroyed()) {
-        mainWindow.webContents.send(channel, payload);
-    }
+    if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send(channel, payload);
 }
 
 function setupAutoUpdater() {
     if (!app.isPackaged) return;
-
     autoUpdater.autoDownload = false;
-
     autoUpdater.on('checking-for-update', () => sendUpdate('update:checking'));
     autoUpdater.on('update-available', (info) => sendUpdate('update:available', info));
     autoUpdater.on('update-not-available', (info) => sendUpdate('update:none', info));
@@ -112,16 +112,14 @@ function setupAutoUpdater() {
     autoUpdater.on('error', (err) => sendUpdate('update:error', String(err)));
 }
 
-// --- 📅 مدد الاشتراكات بالأيام ---
 const PLAN_DURATIONS = {
     '1 Month': 30,
     '3 Months': 90,
     '6 Months': 180,
     '12 Months': 365,
-    'Premium': 9999 // Lifetime
+    'Premium': 9999
 };
 
-// --- 🔒 HWID GENERATOR ---
 const getHWID = async () => {
     try {
         const uuidData = await si.uuid();
@@ -131,18 +129,13 @@ const getHWID = async () => {
     }
 };
 
-// --- 🔒 LOCAL CONFIG ---
 const userDataPath = app.getPath('userData');
 const configPath = path.join(userDataPath, 'sys-config.json');
 
 function loadConfig() {
     try {
-        if (fs.existsSync(configPath)) {
-            const data = fs.readFileSync(configPath, 'utf8');
-            return JSON.parse(data);
-        }
+        if (fs.existsSync(configPath)) return JSON.parse(fs.readFileSync(configPath, 'utf8'));
     } catch (e) { }
-
     const initialConfig = {
         installDate: Date.now(),
         licenseKey: null,
@@ -158,19 +151,17 @@ function saveConfig(config) {
     try { fs.writeFileSync(configPath, JSON.stringify(config)); } catch (e) { }
 }
 
-// --- 📁 Helper Functions for Cleaner ---
 const getDirInfo = (dirPath) => {
-    let size = 0; let count = 0;
+    let size = 0, count = 0;
     try {
         if (!fs.existsSync(dirPath)) return { size: 0, count: 0 };
-        const files = fs.readdirSync(dirPath);
-        files.forEach(file => {
+        fs.readdirSync(dirPath).forEach(file => {
             const filePath = path.join(dirPath, file);
             try {
                 const stats = fs.statSync(filePath);
                 if (stats.isDirectory()) {
-                    const subInfo = getDirInfo(filePath);
-                    size += subInfo.size; count += subInfo.count;
+                    const sub = getDirInfo(filePath);
+                    size += sub.size; count += sub.count;
                 } else { size += stats.size; count++; }
             } catch (e) { }
         });
@@ -180,16 +171,14 @@ const getDirInfo = (dirPath) => {
 
 const clearDir = (dirPath) => {
     try {
-        if (fs.existsSync(dirPath)) {
-            const files = fs.readdirSync(dirPath);
-            files.forEach(file => {
-                const curPath = path.join(dirPath, file);
-                try {
-                    if (fs.lstatSync(curPath).isDirectory()) fs.rmSync(curPath, { recursive: true, force: true });
-                    else fs.unlinkSync(curPath);
-                } catch (e) { }
-            });
-        }
+        if (!fs.existsSync(dirPath)) return;
+        fs.readdirSync(dirPath).forEach(file => {
+            const curPath = path.join(dirPath, file);
+            try {
+                if (fs.lstatSync(curPath).isDirectory()) fs.rmSync(curPath, { recursive: true, force: true });
+                else fs.unlinkSync(curPath);
+            } catch (e) { }
+        });
     } catch (e) { }
 };
 
@@ -208,80 +197,49 @@ function createWindow() {
         icon: iconPath
     });
 
-    // Debug events (باش نعرفو علاش كيبقى أبيض)
     mainWindow.webContents.on('did-fail-load', (event, errorCode, errorDescription, validatedURL, isMainFrame) => {
         if (isMainFrame) logToFile('did-fail-load:', { errorCode, errorDescription, validatedURL });
     });
+
     mainWindow.webContents.on('render-process-gone', (event, details) => {
         logToFile('render-process-gone:', details);
     });
 
     if (app.isPackaged) {
-        // dist جاية من extraResources => process.resourcesPath\dist\index.html
         const indexPath = getAssetPath('dist', 'index.html');
         const indexURL = pathToFileURL(indexPath).toString();
-
-        logToFile('indexPath=', indexPath, 'exists=', fs.existsSync(indexPath));
-        logToFile('indexURL=', indexURL);
-
+        logToFile('indexURL=', indexURL, 'exists=', fs.existsSync(indexPath));
         mainWindow.loadURL(indexURL).catch((e) => logToFile('loadURL error:', String(e)));
     } else {
         mainWindow.loadURL('http://localhost:5173').catch((e) => logToFile('loadURL error:', String(e)));
         mainWindow.webContents.openDevTools();
     }
 
-    // الخلفية: فاش يكليكي على X كيتخبى
     mainWindow.on('close', function (event) {
-        if (!isQuiting) {
-            event.preventDefault();
-            mainWindow.hide();
-            return false;
-        }
+        if (!isQuiting) { event.preventDefault(); mainWindow.hide(); return false; }
     });
 
     // ==========================================
-    // ---------- 🚀 IPC HANDLERS 🚀 ----------
+    // IPC HANDLERS
     // ==========================================
 
-    // --- 🌟 UPDATES ---
     ipcMain.handle('get-app-version', () => app.getVersion());
 
     ipcMain.handle('check-update', async () => {
-        if (!app.isPackaged) {
-            return { status: 'dev', message: 'Updates work only in packaged build.' };
-        }
-
+        if (!app.isPackaged) return { status: 'dev', message: 'Updates work only in packaged build.' };
         return new Promise(async (resolve) => {
             const cleanup = () => {
                 autoUpdater.removeListener('update-available', onAvailable);
                 autoUpdater.removeListener('update-not-available', onNone);
                 autoUpdater.removeListener('error', onError);
             };
-
-            const onAvailable = (info) => {
-                cleanup();
-                resolve({ status: 'update_available', message: `Version ${info?.version || 'new'} is available!` });
-            };
-
-            const onNone = () => {
-                cleanup();
-                resolve({ status: 'latest', message: 'You are on the latest version.' });
-            };
-
-            const onError = (err) => {
-                cleanup();
-                resolve({ status: 'error', message: String(err) });
-            };
-
+            const onAvailable = (info) => { cleanup(); resolve({ status: 'update_available', message: `Version ${info?.version || 'new'} is available!` }); };
+            const onNone = () => { cleanup(); resolve({ status: 'latest', message: 'You are on the latest version.' }); };
+            const onError = (err) => { cleanup(); resolve({ status: 'error', message: String(err) }); };
             autoUpdater.on('update-available', onAvailable);
             autoUpdater.on('update-not-available', onNone);
             autoUpdater.on('error', onError);
-
-            try {
-                await autoUpdater.checkForUpdates();
-            } catch (e) {
-                onError(e);
-            }
+            try { await autoUpdater.checkForUpdates(); } catch (e) { onError(e); }
         });
     });
 
@@ -297,12 +255,12 @@ function createWindow() {
         return { status: 'installing' };
     });
 
-    // --- 🔥 1. SUBSCRIPTION ---
+    // --- 🔥 SUBSCRIPTION — Issue 2: Trial fix ---
     ipcMain.handle('get-subscription-status', async () => {
         const config = loadConfig();
         const hwid = await getHWID();
 
-        // Paid
+        // Paid license check
         if (config.licenseKey && config.plan) {
             try {
                 const { data, error } = await supabase
@@ -313,10 +271,7 @@ function createWindow() {
 
                 if (data && !error) {
                     if (data.status !== 'active') return { status: 'expired', daysLeft: 0, plan: 'License Revoked' };
-                    if (data.activated_at) {
-                        config.activationDate = data.activated_at;
-                        saveConfig(config);
-                    }
+                    if (data.activated_at) { config.activationDate = data.activated_at; saveConfig(config); }
                 }
             } catch (e) { }
 
@@ -325,26 +280,40 @@ function createWindow() {
                 const durationDays = PLAN_DURATIONS[config.plan] || 30;
                 const expiryDate = startDate + durationDays * 24 * 60 * 60 * 1000;
                 const now = Date.now();
-
                 if (now > expiryDate) return { status: 'expired', daysLeft: 0, plan: `${config.plan} (Expired)` };
                 const daysLeft = Math.ceil((expiryDate - now) / (1000 * 60 * 60 * 24));
                 return { status: 'pro', daysLeft, plan: config.plan };
             }
-
             return { status: 'pro', daysLeft: 'Unlimited', plan: config.plan };
         }
 
-        // Trial
-        let { data: trial } = await supabase.from('trials').select('*').eq('hwid', hwid).single();
+        // ✅ Issue 2 Fix: get OLDEST trial row only (no duplicates)
+        const { data: trials } = await supabase
+            .from('trials')
+            .select('*')
+            .eq('hwid', hwid)
+            .order('created_at', { ascending: true })
+            .limit(1);
+
+        let trial = trials && trials.length > 0 ? trials[0] : null;
+
+        // Insert only if no record exists at all
         if (!trial) {
-            const { data: newTrial } = await supabase.from('trials').insert({ hwid }).select().single();
+            const { data: newTrial } = await supabase
+                .from('trials')
+                .insert({ hwid })
+                .select()
+                .single();
             trial = newTrial;
         }
 
-        const installDate = trial ? new Date(trial.created_at).getTime() : config.installDate;
-        const diffDays = Math.ceil(Math.abs(Date.now() - installDate) / (1000 * 60 * 60 * 24));
+        const installDate = trial
+            ? new Date(trial.created_at).getTime()
+            : config.installDate;
 
-        if (diffDays > 7) return { status: 'expired', daysLeft: 0, plan: 'Free Trial' };
+        const diffDays = Math.floor((Date.now() - installDate) / (1000 * 60 * 60 * 24));
+
+        if (diffDays >= 7) return { status: 'expired', daysLeft: 0, plan: 'Trial Expired' };
         return { status: 'trial', daysLeft: 7 - diffDays, plan: 'Free Trial' };
     });
 
@@ -352,13 +321,11 @@ function createWindow() {
         try {
             if (!key || key.length < 8) return { success: false, error: 'Invalid Format' };
             const hwid = await getHWID();
-
             const { data: license, error } = await supabase.from('licenses').select('*').eq('key', key).single();
             if (error || !license) return { success: false, error: 'Key not found' };
             if (license.hwid && license.hwid !== hwid) return { success: false, error: 'Used on another PC' };
 
             const nowISO = new Date().toISOString();
-
             if (!license.hwid) {
                 const { error: updateError } = await supabase
                     .from('licenses')
@@ -372,7 +339,6 @@ function createWindow() {
             config.plan = license.plan || 'Premium';
             config.activationDate = license.activated_at || nowISO;
             saveConfig(config);
-
             return { success: true };
         } catch (e) {
             return { success: false, error: 'Connection Error' };
@@ -381,14 +347,12 @@ function createWindow() {
 
     ipcMain.handle('remove-license', async () => {
         const config = loadConfig();
-        config.licenseKey = null;
-        config.plan = null;
-        config.activationDate = null;
+        config.licenseKey = null; config.plan = null; config.activationDate = null;
         saveConfig(config);
         return { success: true };
     });
 
-    // --- 2. LIVE STATS & TRAY ---
+    // --- LIVE STATS ---
     setInterval(async () => {
         try {
             const mem = await si.mem();
@@ -405,19 +369,16 @@ function createWindow() {
             const cpuUsage = cpu.currentLoad.toFixed(0);
             const netDown = ((rx * 8) / 1000 / 1000).toFixed(2);
             const netUp = ((tx * 8) / 1000 / 1000).toFixed(2);
-
-            const cpuTemp = cpuTempData && cpuTempData.main ? cpuTempData.main.toFixed(0) : '--';
+            const cpuTemp = cpuTempData?.main ? cpuTempData.main.toFixed(0) : '--';
 
             let gpuTemp = '--';
-            if (graphicsData && graphicsData.controllers && graphicsData.controllers.length > 0) {
-                const gpuWithTemp = graphicsData.controllers.find(c => c.temperatureGpu);
-                if (gpuWithTemp) gpuTemp = gpuWithTemp.temperatureGpu.toFixed(0);
+            if (graphicsData?.controllers?.length > 0) {
+                const g = graphicsData.controllers.find(c => c.temperatureGpu);
+                if (g) gpuTemp = g.temperatureGpu.toFixed(0);
             }
 
             if (mainWindow && !mainWindow.isDestroyed()) {
-                mainWindow.webContents.send('sys-data', {
-                    ramUsed, ramTotal, cpuUsage, netDown, netUp, cpuTemp, gpuTemp
-                });
+                mainWindow.webContents.send('sys-data', { ramUsed, ramTotal, cpuUsage, netDown, netUp, cpuTemp, gpuTemp });
             }
 
             if (tray) {
@@ -432,60 +393,37 @@ function createWindow() {
 ━━━━━━━━━━━━━━━━━`
                 );
             }
-        } catch (e) {
-            logToFile('Stats Error:', String(e?.stack || e));
-        }
+        } catch (e) { logToFile('Stats Error:', String(e?.stack || e)); }
     }, 2000);
 
-    // --- 3. NETWORK HANDLERS ---
+    // --- NETWORK ---
     ipcMain.handle('check-ping', async (event, host) => {
         return new Promise((resolve) => {
             if (!host) return resolve('--');
             const start = Date.now();
             const socket = new net.Socket();
             socket.setTimeout(2000);
-
-            socket.connect(443, host, () => {
-                resolve((Date.now() - start).toString());
-                socket.destroy();
-            });
-
+            socket.connect(443, host, () => { resolve((Date.now() - start).toString()); socket.destroy(); });
             socket.on('error', () => {
-                const socket80 = new net.Socket();
-                const start80 = Date.now();
-                socket80.setTimeout(1000);
-
-                socket80.connect(80, host, () => {
-                    resolve((Date.now() - start80).toString());
-                    socket80.destroy();
-                });
-
-                socket80.on('error', () => { resolve('999'); socket80.destroy(); });
-                socket80.on('timeout', () => { resolve('999'); socket80.destroy(); });
+                const s80 = new net.Socket(); const s80start = Date.now(); s80.setTimeout(1000);
+                s80.connect(80, host, () => { resolve((Date.now() - s80start).toString()); s80.destroy(); });
+                s80.on('error', () => { resolve('999'); s80.destroy(); });
+                s80.on('timeout', () => { resolve('999'); s80.destroy(); });
             });
-
             socket.on('timeout', () => { resolve('999'); socket.destroy(); });
         });
     });
 
     ipcMain.handle('set-dns', async (event, dnsData) => {
-        const psCommand =
-            dnsData.id === 'Automatic'
-                ? `Get-NetAdapter | Where-Object {$_.Status -eq 'Up'} | Set-DnsClientServerAddress -ResetServerAddresses`
-                : `Get-NetAdapter | Where-Object {$_.Status -eq 'Up'} | Set-DnsClientServerAddress -ServerAddresses "${dnsData.primary}","${dnsData.secondary}"`;
-
-        return new Promise(resolve =>
-            exec(`powershell -Command "${psCommand}"`, (error) => resolve(error ? 'Failed' : 'Success'))
-        );
+        const psCommand = dnsData.id === 'Automatic'
+            ? `Get-NetAdapter | Where-Object {$_.Status -eq 'Up'} | Set-DnsClientServerAddress -ResetServerAddresses`
+            : `Get-NetAdapter | Where-Object {$_.Status -eq 'Up'} | Set-DnsClientServerAddress -ServerAddresses "${dnsData.primary}","${dnsData.secondary}"`;
+        return new Promise(resolve => exec(`powershell -Command "${psCommand}"`, (e) => resolve(e ? 'Failed' : 'Success')));
     });
 
     ipcMain.handle('get-current-dns', async () => {
-        const psCommand =
-            `Get-NetAdapter | Where-Object {$_.Status -eq 'Up'} | Get-DnsClientServerAddress -AddressFamily IPv4 | Select-Object -ExpandProperty ServerAddresses`;
-
-        return new Promise(resolve =>
-            exec(`powershell -Command "${psCommand}"`, (error, stdout) => resolve(error ? [] : stdout.trim().split(/\s+/)))
-        );
+        const psCommand = `Get-NetAdapter | Where-Object {$_.Status -eq 'Up'} | Get-DnsClientServerAddress -AddressFamily IPv4 | Select-Object -ExpandProperty ServerAddresses`;
+        return new Promise(resolve => exec(`powershell -Command "${psCommand}"`, (e, stdout) => resolve(e ? [] : stdout.trim().split(/\s+/))));
     });
 
     ipcMain.handle('get-ip-info', async () => {
@@ -493,48 +431,30 @@ function createWindow() {
             const response = await fetch('http://ip-api.com/json');
             const data = await response.json();
             return { ip: data.query, isp: data.isp, country: data.countryCode };
-        } catch (error) {
-            return { ip: 'Unknown', isp: 'Unknown', country: '--' };
-        }
+        } catch (e) { return { ip: 'Unknown', isp: 'Unknown', country: '--' }; }
     });
 
     ipcMain.handle('toggle-booster', async (event, enabled) => {
         const commands = enabled
             ? ['netsh int tcp set global autotuninglevel=normal', 'netsh int tcp set global rss=enabled']
             : ['netsh int tcp set global autotuninglevel=disabled', 'netsh int tcp set global rss=default'];
-
         for (const cmd of commands) await new Promise(resolve => exec(cmd, resolve));
         return enabled;
     });
 
     ipcMain.handle('reset-network', async () => {
-        const commands = [
-            'netsh winsock reset',
-            'netsh int ip reset',
-            'ipconfig /release',
-            'ipconfig /renew',
-            'ipconfig /flushdns'
-        ];
-        try {
-            for (const cmd of commands) await new Promise(resolve => exec(cmd, resolve));
-            return 'Success';
-        } catch (error) {
-            return 'Error';
-        }
+        const cmds = ['netsh winsock reset', 'netsh int ip reset', 'ipconfig /release', 'ipconfig /renew', 'ipconfig /flushdns'];
+        try { for (const cmd of cmds) await new Promise(resolve => exec(cmd, resolve)); return 'Success'; }
+        catch (e) { return 'Error'; }
     });
 
-    // --- 4. GAMING HANDLERS ---
+    // --- GAMING ---
     ipcMain.handle('set-gaming-mode', async (event, enable) => {
         const cmd = enable
             ? `powercfg -duplicatescheme e9a42b02-d5df-448d-aa00-03f14749eb61 && powercfg /setactive e9a42b02-d5df-448d-aa00-03f14749eb61`
             : `powercfg /setactive 381b4222-f694-41f0-9685-ff5bb260df2e`;
-
-        try {
-            await new Promise(resolve => exec(cmd, resolve));
-            return enable ? 'Enabled' : 'Disabled';
-        } catch (e) {
-            return 'Error';
-        }
+        try { await new Promise(resolve => exec(cmd, resolve)); return enable ? 'Enabled' : 'Disabled'; }
+        catch (e) { return 'Error'; }
     });
 
     ipcMain.handle('get-processes', async () => {
@@ -544,25 +464,21 @@ function createWindow() {
                 .filter(p => p.mem > 1)
                 .sort((a, b) => b.mem - a.mem)
                 .slice(0, 15)
-                .map(p => ({ name: p.name, pid: p.pid, mem: (p.mem).toFixed(1), cpu: (p.cpu).toFixed(1) }));
-        } catch (e) {
-            return [];
-        }
+                .map(p => ({ name: p.name, pid: p.pid, mem: p.mem.toFixed(1), cpu: p.cpu.toFixed(1) }));
+        } catch (e) { return []; }
     });
 
     ipcMain.handle('kill-process', async (event, pid) => {
         try { process.kill(pid); return 'Killed'; } catch (e) { return 'Error'; }
     });
 
-    // --- 5. SYSTEM CLEANER HANDLERS ---
+    // --- CLEANER ---
     ipcMain.handle('optimize-system', async () => {
         try {
             await new Promise(resolve => exec('ipconfig /flushdns', resolve));
             clearDir(os.tmpdir());
             return 'Optimization Complete';
-        } catch (e) {
-            return 'Error';
-        }
+        } catch (e) { return 'Error'; }
     });
 
     const getJunkPaths = () => ({
@@ -575,16 +491,13 @@ function createWindow() {
     });
 
     ipcMain.handle('scan-junk', async () => {
-        const paths = getJunkPaths();
-        const results = {};
+        const paths = getJunkPaths(); const results = {};
         for (const [key, dir] of Object.entries(paths)) results[key] = getDirInfo(dir);
         return results;
     });
 
     ipcMain.handle('clean-junk', async (event, categories) => {
-        const paths = getJunkPaths();
-        let totalFreed = 0;
-
+        const paths = getJunkPaths(); let totalFreed = 0;
         for (const cat of categories) {
             if (paths[cat]) {
                 totalFreed += getDirInfo(paths[cat]).size;
@@ -596,7 +509,7 @@ function createWindow() {
     });
 }
 
-// 🌟 تشغيل التطبيق والـ Tray
+// 🌟 APP READY
 app.whenReady().then(() => {
     createWindow();
     setupAutoUpdater();
@@ -606,24 +519,16 @@ app.whenReady().then(() => {
 
     if (!trayIcon.isEmpty()) {
         tray = new Tray(trayIcon);
-
         const contextMenu = Menu.buildFromTemplate([
             { label: 'Open SystemMax', click: () => { if (mainWindow) mainWindow.show(); } },
             { type: 'separator' },
             { label: 'Quit', click: () => { isQuiting = true; app.quit(); } }
         ]);
-
         tray.setToolTip('SystemMax Optimizer');
         tray.setContextMenu(contextMenu);
-
-        tray.on('click', () => {
-            if (mainWindow) {
-                mainWindow.show();
-                mainWindow.focus();
-            }
-        });
+        tray.on('click', () => { if (mainWindow) { mainWindow.show(); mainWindow.focus(); } });
     } else {
-        logToFile('Tray icon is empty, tray disabled. iconPath=', iconPath);
+        logToFile('Tray icon is empty. iconPath=', iconPath);
     }
 });
 
