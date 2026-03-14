@@ -2,7 +2,7 @@
   "name": "systemmax-optimizer",
   "productName": "SystemMax Optimizer",
   "private": true,
-  "version": "2.0.6",
+  "version": "2.0.7",
   "description": "Professional Gaming & Network Optimization Suite",
   "main": "main.cjs",
   "author": "SystemMax",

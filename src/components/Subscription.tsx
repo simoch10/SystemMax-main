@@ -7,6 +7,7 @@ interface PricingPlan {
   originalPrice?: string;
   savings?: string;
   popular?: boolean;
+  link: string;
 }
 
 export default function Subscription() {
@@ -17,10 +18,10 @@ export default function Subscription() {
   const [message, setMessage] = useState<string | null>(null);
 
   const plans: PricingPlan[] = [
-    { duration: '1 Month', price: '€12.99' },
-    { duration: '3 Months', price: '€23.99', originalPrice: '€38.97', savings: 'Save 38%', popular: true },
-    { duration: '6 Months', price: '€34.99', originalPrice: '€77.94', savings: 'Save 55%' },
-    { duration: '12 Months', price: '€59.99', originalPrice: '€155.88', savings: 'Save 62%' },
+    { duration: '1 Month', price: '€12.99', link: 'https://systemmax.lemonsqueezy.com/checkout/buy/9f43930b-f21d-41c5-af1d-99e18be4b3ed?variant=1393689&media=0&desc=0' },
+    { duration: '3 Months', price: '€23.99', originalPrice: '€38.97', savings: 'Save 38%', popular: true, link: 'https://systemmax.lemonsqueezy.com/checkout/buy/9f43930b-f21d-41c5-af1d-99e18be4b3ed?variant=1393744&media=0&desc=0' },
+    { duration: '6 Months', price: '€34.99', originalPrice: '€77.94', savings: 'Save 55%', link: 'https://systemmax.lemonsqueezy.com/checkout/buy/9f43930b-f21d-41c5-af1d-99e18be4b3ed?variant=1393750&media=0&desc=0' },
+    { duration: '12 Months', price: '€59.99', originalPrice: '€155.88', savings: 'Save 62%', link: 'https://systemmax.lemonsqueezy.com/checkout/buy/9f43930b-f21d-41c5-af1d-99e18be4b3ed?variant=1393751&media=0&desc=0' },
   ];
 
   const features = [
@@ -88,8 +89,8 @@ export default function Subscription() {
           </div>
 
           <div className={`px-4 py-2 rounded-lg border flex items-center gap-2 ${status.status === 'pro' ? 'bg-yellow-400/10 border-yellow-400 text-yellow-400' :
-              status.status === 'expired' ? 'bg-red-500/10 border-red-500 text-red-400' :
-                'bg-green-500/10 border-green-500 text-green-400'
+            status.status === 'expired' ? 'bg-red-500/10 border-red-500 text-red-400' :
+              'bg-green-500/10 border-green-500 text-green-400'
             }`}>
             {status.status === 'pro' ? <Crown className="w-5 h-5" /> : <ShieldCheck className="w-5 h-5" />}
             <span className="font-bold">
@@ -195,9 +196,9 @@ export default function Subscription() {
                     <p className="text-4xl font-bold text-yellow-400 mb-1">{plan.price}</p>
                     {plan.savings && <p className="text-sm text-green-400 font-semibold">{plan.savings}</p>}
                   </div>
-                  {/* الرابط الجديد ديال الدفع */}
+                  {/* الرابط الجديد ديال الدفع مربوط مع Lemon Squeezy */}
                   <a
-                    href="https://digitalsupportgroup.digital/payment-gateway/"
+                    href={plan.link}
                     target="_blank"
                     rel="noreferrer"
                     className={`w-full py-3 rounded-lg font-semibold transition-all text-center block ${plan.popular ? 'bg-yellow-400 hover:bg-yellow-500 text-black shadow-lg shadow-yellow-400/30' : 'bg-zinc-800 hover:bg-zinc-700 text-white border border-zinc-700'}`}
@@ -236,7 +237,7 @@ export default function Subscription() {
             </div>
             {/* الرابط الجديد ديال الدعم */}
             <a
-              href="https://digitalsupportgroup.digital/contact-us/"
+              href="https://digitalsupportgroup.digital/support/"
               target="_blank"
               rel="noreferrer"
               className="bg-zinc-800 hover:bg-zinc-700 text-white font-semibold py-3 px-8 rounded-lg transition-all border border-zinc-700 block text-center"
